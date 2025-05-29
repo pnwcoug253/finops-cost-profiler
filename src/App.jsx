@@ -9,7 +9,8 @@ import {
   HeaderGlobalAction,
   SkipToContent,
   Content,
-  Theme
+  Theme,
+  Button
 } from '@carbon/react';
 import { Switcher, Help, UserAvatar } from '@carbon/icons-react';
 
@@ -23,17 +24,88 @@ import Allocations from './pages/Allocations';
 // Import sample data
 import { sampleVMs } from './data/sampleData';
 
+// Error Boundary Component
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '2rem', textAlign: 'center' }}>
+          <h1>Something went wrong</h1>
+          <p>The application encountered an error. Please try refreshing the page.</p>
+          <Button 
+            onClick={() => {
+              localStorage.clear();
+              window.location.reload();
+            }}
+            style={{ marginTop: '1rem' }}
+          >
+            Clear Data and Reload
+          </Button>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 function AppContent() {
   const location = useLocation();
   const [costProfiles, setCostProfiles] = useState([]);
   const [resources, setResources] = useState([]);
+  
+  // App version for cache busting
+  const APP_VERSION = '1.1.0';
 
   // Load initial data
   useEffect(() => {
-    // Load cost profiles from localStorage
-    const savedProfiles = localStorage.getItem('costProfiles');
-    if (savedProfiles) {
-      setCostProfiles(JSON.parse(savedProfiles));
+    try {
+      // Check app version
+      const savedVersion = localStorage.getItem('appVersion');
+      if (savedVersion !== APP_VERSION) {
+        // Clear all old data if version mismatch
+        localStorage.clear();
+        localStorage.setItem('appVersion', APP_VERSION);
+      }
+      
+      // Load cost profiles from localStorage with error handling
+      const savedProfiles = localStorage.getItem('costProfiles');
+      if (savedProfiles) {
+        const parsed = JSON.parse(savedProfiles);
+        // Validate the data structure
+        if (Array.isArray(parsed)) {
+          // Ensure each profile has required fields
+          const validProfiles = parsed.filter(profile => 
+            profile && 
+            typeof profile === 'object' && 
+            profile.id && 
+            profile.name &&
+            profile.rules &&
+            profile.costComponents
+          );
+          setCostProfiles(validProfiles);
+        } else {
+          // Clear corrupted data
+          localStorage.removeItem('costProfiles');
+        }
+      }
+    } catch (error) {
+      console.error('Error loading cost profiles:', error);
+      // Clear corrupted localStorage data
+      localStorage.removeItem('costProfiles');
     }
 
     // Load sample VMs
@@ -157,11 +229,13 @@ function AppContent() {
 
 function App() {
   return (
-    <Theme theme="white">
-      <Router>
-        <AppContent />
-      </Router>
-    </Theme>
+    <ErrorBoundary>
+      <Theme theme="white">
+        <Router>
+          <AppContent />
+        </Router>
+      </Theme>
+    </ErrorBoundary>
   );
 }
 

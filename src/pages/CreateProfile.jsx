@@ -237,18 +237,25 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
     
     console.log('Saving profile:', profileToSave);
     
-    if (editMode) {
-      setCostProfiles(costProfiles.map(p =>
-        p.id === profile.id ? profileToSave : p
-      ));
-    } else {
-      setCostProfiles([...costProfiles, profileToSave]);
+    try {
+      if (editMode) {
+        setCostProfiles(costProfiles.map(p =>
+          p.id === profile.id ? profileToSave : p
+        ));
+      } else {
+        setCostProfiles([...costProfiles, profileToSave]);
+      }
+      
+      setShowSuccess(true);
+      
+      // Use window.location for more reliable navigation in production
+      setTimeout(() => {
+        window.location.href = '/cost-profiles';
+      }, 2000);
+    } catch (error) {
+      console.error('Error saving profile:', error);
+      setErrors({ save: 'Failed to save profile. Please try again.' });
     }
-    
-    setShowSuccess(true);
-    setTimeout(() => {
-      navigate('/cost-profiles');
-    }, 2000);
   };
 
   return (

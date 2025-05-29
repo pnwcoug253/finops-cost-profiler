@@ -18,7 +18,8 @@ import {
   Tag,
   OverflowMenu,
   OverflowMenuItem,
-  Modal
+  Modal,
+  InlineNotification
 } from '@carbon/react';
 import { Add, Edit, TrashCan, View, CheckmarkFilled } from '@carbon/react/icons';
 

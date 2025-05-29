@@ -248,9 +248,15 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
       
       setShowSuccess(true);
       
-      // Use window.location for more reliable navigation in production
+      // Use a more compatible navigation approach
       setTimeout(() => {
-        window.location.href = '/cost-profiles';
+        // Check if we're in development or production
+        if (window.location.hostname === 'localhost') {
+          navigate('/cost-profiles');
+        } else {
+          // For production, use a full page navigation
+          window.location.href = `${window.location.origin}/cost-profiles`;
+        }
       }, 2000);
     } catch (error) {
       console.error('Error saving profile:', error);
@@ -507,7 +513,13 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
             <Button
               kind="secondary"
-              onClick={() => navigate('/cost-profiles')}
+              onClick={() => {
+                if (window.location.hostname === 'localhost') {
+                  navigate('/cost-profiles');
+                } else {
+                  window.location.href = `${window.location.origin}/cost-profiles`;
+                }
+              }}
             >
               Cancel
             </Button>

@@ -97,12 +97,14 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
     { value: 'memory', label: 'Cost per GB Memory', category: 'hardware' },
     { value: 'storage', label: 'Cost per GB Storage', category: 'hardware' },
     { value: 'fixed', label: 'Fixed Monthly Cost', category: 'operations' },
-    { value: 'one_time', label: 'One-Time Cost', category: 'other' }
+    { value: 'one_time', label: 'One-Time Cost', category: 'other' },
+    { value: 'software_license', label: 'Software License', category: 'software' },
+    { value: 'support', label: 'Support Contract', category: 'operations' }
   ];
 
   const componentCategories = {
     hardware: 'Hardware',
-    operations: 'Operations',
+    operations: 'Operations', 
     software: 'Software',
     other: 'Other'
   };
@@ -188,18 +190,89 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
       memory: 'per GB/month',
       storage: 'per GB/month',
       fixed: 'per VM/month',
-      one_time: 'one time'
+      one_time: 'one time',
+      software_license: 'per VM/month',
+      support: 'per month'
     };
+    
+    const componentType = componentTypeOptions.find(opt => opt.value === type);
     
     setProfile({
       ...profile,
       costComponents: profile.costComponents.map(c =>
-        c.id === id ? { ...c, type, unit: unitMap[type] } : c
+        c.id === id ? { ...c, type, unit: unitMap[type], category: componentType?.category } : c
       )
     });
   };
 
-  // Validate form
+  // Add advanced component
+  const addAdvancedComponent = (category) => {
+    const newComponent = {
+      id: uuidv4(),
+      name: '',
+      category: category
+    };
+
+    if (category === 'hardware') {
+      newComponent.subType = 'server';
+      newComponent.purchasePrice = 0;
+      newComponent.depreciationYears = 5;
+      newComponent.allocationType = 'per_vm';
+    } else if (category === 'operations') {
+      newComponent.subType = 'facilities';
+      newComponent.monthlyCost = 0;
+      newComponent.allocationType = 'per_vm';
+    }
+
+    setProfile({
+      ...profile,
+      advancedCostComponents: {
+        ...profile.advancedCostComponents,
+        [category]: [...(profile.advancedCostComponents[category] || []), newComponent]
+      }
+    });
+  };
+
+  // Update advanced component
+  const updateAdvancedComponent = (category, id, field, value) => {
+    setProfile({
+      ...profile,
+      advancedCostComponents: {
+        ...profile.advancedCostComponents,
+        [category]: profile.advancedCostComponents[category].map(comp =>
+          comp.id === id ? { ...comp, [field]: value } : comp
+        )
+      }
+    });
+  };
+
+  // Remove advanced component
+  const removeAdvancedComponent = (category, id) => {
+    setProfile({
+      ...profile,
+      advancedCostComponents: {
+        ...profile.advancedCostComponents,
+        [category]: profile.advancedCostComponents[category].filter(comp => comp.id !== id)
+      }
+    });
+  };
+
+  // Calculate total monthly CapEx
+  const calculateAdvancedCapEx = () => {
+    const hardware = profile.advancedCostComponents.hardware || [];
+    const total = hardware.reduce((sum, comp) => {
+      const monthly = (comp.purchasePrice || 0) / ((comp.depreciationYears || 5) * 12);
+      return sum + monthly;
+    }, 0);
+    return total.toFixed(2);
+  };
+
+  // Calculate total monthly OpEx
+  const calculateAdvancedOpEx = () => {
+    const operations = profile.advancedCostComponents.operations || [];
+    const total = operations.reduce((sum, comp) => sum + (comp.monthlyCost || 0), 0);
+    return total.toFixed(2);
+  };
   const validateForm = () => {
     const newErrors = {};
     
@@ -403,7 +476,7 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
             <div style={{ marginBottom: '1rem' }}>
               <p style={{ fontWeight: 500, marginBottom: '0.5rem' }}>Conditions</p>
               <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1rem' }}>
-                Define conditions to match VMs. For example: CPU > 8, Tags.environment = "production"
+                Define conditions to match VMs. For example: CPU greater than 8, Tags.environment = "production"
               </p>
             </div>
             
@@ -482,81 +555,71 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
                   by category for better cost visibility.
                 </p>
                 
-                {/* Group components by category */}
-                {Object.entries(componentCategories).map(([categoryKey, categoryName]) => {
-                  const categoryComponents = profile.costComponents.filter(comp => {
-                    const componentType = componentTypeOptions.find(opt => opt.value === comp.type);
-                    return componentType?.category === categoryKey;
-                  });
-                  
-                  if (categoryComponents.length === 0 && categoryKey !== 'hardware') return null;
+                {profile.costComponents.map((component, index) => {
+                  const componentType = componentTypeOptions.find(opt => opt.value === component.type);
+                  const categoryName = componentCategories[componentType?.category || 'other'];
                   
                   return (
-                    <div key={categoryKey} style={{ marginBottom: '2rem' }}>
-                      <h4 style={{ marginBottom: '1rem', fontSize: '1rem' }}>{categoryName}</h4>
-                      
-                      {categoryComponents.map((component, index) => (
-                        <div key={component.id} style={{ 
-                          padding: '1rem', 
-                          backgroundColor: '#f4f4f4', 
-                          marginBottom: '1rem',
-                          borderLeft: '4px solid #0f62fe'
-                        }}>
-                          <Stack gap={4}>
-                            <div style={{ display: 'flex', gap: '1rem' }}>
-                              <TextInput
-                                id={`component-name-${index}`}
-                                labelText="Component Name"
-                                placeholder="e.g., CPU Cost, VMware License"
-                                value={component.name}
-                                onChange={(e) => updateCostComponent(component.id, 'name', e.target.value)}
-                                invalid={!!errors[`component_name_${index}`]}
-                                invalidText={errors[`component_name_${index}`]}
-                              />
-                              
-                              <Select
-                                id={`component-type-${index}`}
-                                labelText="Type"
-                                value={component.type}
-                                onChange={(e) => updateComponentType(component.id, e.target.value)}
-                              >
-                                {componentTypeOptions
-                                  .filter(opt => opt.category === categoryKey)
-                                  .map(opt => (
-                                    <SelectItem key={opt.value} value={opt.value} text={opt.label} />
-                                  ))}
-                              </Select>
-                            </div>
-                            
-                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-                              <NumberInput
-                                id={`component-value-${index}`}
-                                label="Cost Value (AUD)"
-                                min={0}
-                                step={0.01}
-                                value={component.value}
-                                onChange={(e, { value }) => updateCostComponent(component.id, 'value', value)}
-                                invalid={!!errors[`component_value_${index}`]}
-                                invalidText={errors[`component_value_${index}`]}
-                              />
-                              
-                              <div style={{ flex: 1 }}>
-                                <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.25rem' }}>Unit</p>
-                                <p style={{ padding: '0.75rem', backgroundColor: '#e0e0e0' }}>{component.unit}</p>
-                              </div>
-                              
-                              <IconButton
-                                label="Remove component"
-                                kind="ghost"
-                                size="lg"
-                                onClick={() => removeCostComponent(component.id)}
-                              >
-                                <TrashCan />
-                              </IconButton>
-                            </div>
-                          </Stack>
+                    <div key={component.id} style={{ 
+                      padding: '1rem', 
+                      backgroundColor: '#f4f4f4', 
+                      marginBottom: '1rem',
+                      borderLeft: '4px solid #0f62fe'
+                    }}>
+                      <Tag type="gray" size="sm" style={{ marginBottom: '0.5rem' }}>
+                        {categoryName}
+                      </Tag>
+                      <Stack gap={4}>
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                          <TextInput
+                            id={`component-name-${index}`}
+                            labelText="Component Name"
+                            placeholder="e.g., CPU Cost, VMware License"
+                            value={component.name}
+                            onChange={(e) => updateCostComponent(component.id, 'name', e.target.value)}
+                            invalid={!!errors[`component_name_${index}`]}
+                            invalidText={errors[`component_name_${index}`]}
+                          />
+                          
+                          <Select
+                            id={`component-type-${index}`}
+                            labelText="Type"
+                            value={component.type}
+                            onChange={(e) => updateComponentType(component.id, e.target.value)}
+                          >
+                            {componentTypeOptions.map(opt => (
+                              <SelectItem key={opt.value} value={opt.value} text={opt.label} />
+                            ))}
+                          </Select>
                         </div>
-                      ))}
+                        
+                        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                          <NumberInput
+                            id={`component-value-${index}`}
+                            label="Cost Value (AUD)"
+                            min={0}
+                            step={0.01}
+                            value={component.value}
+                            onChange={(e, { value }) => updateCostComponent(component.id, 'value', value)}
+                            invalid={!!errors[`component_value_${index}`]}
+                            invalidText={errors[`component_value_${index}`]}
+                          />
+                          
+                          <div style={{ flex: 1 }}>
+                            <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.25rem' }}>Unit</p>
+                            <p style={{ padding: '0.75rem', backgroundColor: '#e0e0e0' }}>{component.unit}</p>
+                          </div>
+                          
+                          <IconButton
+                            label="Remove component"
+                            kind="ghost"
+                            size="lg"
+                            onClick={() => removeCostComponent(component.id)}
+                          >
+                            <TrashCan />
+                          </IconButton>
+                        </div>
+                      </Stack>
                     </div>
                   );
                 })}
@@ -577,13 +640,263 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
                   Hardware costs will be depreciated over time, while operational costs are expensed monthly.
                 </p>
                 
-                {/* Advanced mode UI - we'll implement this next */}
-                <InlineNotification
-                  kind="info"
-                  title="Advanced Mode"
-                  subtitle="Advanced cost configuration coming soon!"
-                  lowContrast
-                />
+                {/* Hardware Costs (CapEx) */}
+                <div style={{ marginBottom: '2rem' }}>
+                  <h4 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    Hardware Costs (CapEx)
+                    <Tag type="blue" size="sm">Depreciated</Tag>
+                  </h4>
+                  <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1rem' }}>
+                    Capital expenditures that are depreciated over time. Monthly cost = Purchase Price ÷ (Depreciation Years × 12)
+                  </p>
+                  
+                  {(!profile.advancedCostComponents.hardware || profile.advancedCostComponents.hardware.length === 0) ? (
+                    <div style={{ 
+                      padding: '2rem', 
+                      backgroundColor: '#f4f4f4', 
+                      textAlign: 'center',
+                      marginBottom: '1rem'
+                    }}>
+                      <p style={{ color: '#525252', marginBottom: '1rem' }}>No hardware costs defined</p>
+                      <Button
+                        kind="tertiary"
+                        size="sm"
+                        renderIcon={Add}
+                        onClick={() => addAdvancedComponent('hardware')}
+                      >
+                        Add Hardware Cost
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {profile.advancedCostComponents.hardware.map((component, index) => (
+                        <div key={component.id} style={{ 
+                          padding: '1rem', 
+                          backgroundColor: '#f4f4f4', 
+                          marginBottom: '1rem',
+                          borderLeft: '4px solid #0f62fe'
+                        }}>
+                          <Stack gap={4}>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                              <TextInput
+                                id={`hardware-name-${index}`}
+                                labelText="Component Name"
+                                placeholder="e.g., Server Hardware, Storage Array"
+                                value={component.name}
+                                onChange={(e) => updateAdvancedComponent('hardware', component.id, 'name', e.target.value)}
+                              />
+                              
+                              <Select
+                                id={`hardware-type-${index}`}
+                                labelText="Hardware Type"
+                                value={component.subType || 'server'}
+                                onChange={(e) => updateAdvancedComponent('hardware', component.id, 'subType', e.target.value)}
+                              >
+                                <SelectItem value="server" text="Servers" />
+                                <SelectItem value="storage" text="Storage" />
+                                <SelectItem value="network" text="Network Equipment" />
+                                <SelectItem value="other" text="Other Hardware" />
+                              </Select>
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                              <NumberInput
+                                id={`hardware-cost-${index}`}
+                                label="Total Purchase Price (AUD)"
+                                min={0}
+                                step={100}
+                                value={component.purchasePrice || 0}
+                                onChange={(e, { value }) => updateAdvancedComponent('hardware', component.id, 'purchasePrice', value)}
+                              />
+                              
+                              <NumberInput
+                                id={`hardware-depreciation-${index}`}
+                                label="Depreciation Period (Years)"
+                                min={1}
+                                max={10}
+                                value={component.depreciationYears || 5}
+                                onChange={(e, { value }) => updateAdvancedComponent('hardware', component.id, 'depreciationYears', value)}
+                              />
+                              
+                              <div style={{ flex: 1 }}>
+                                <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.25rem' }}>Monthly CapEx</p>
+                                <p style={{ padding: '0.75rem', backgroundColor: '#e0e0e0', fontWeight: '600' }}>
+                                  ${((component.purchasePrice || 0) / ((component.depreciationYears || 5) * 12)).toFixed(2)}/month
+                                </p>
+                              </div>
+                              
+                              <IconButton
+                                label="Remove component"
+                                kind="ghost"
+                                size="lg"
+                                onClick={() => removeAdvancedComponent('hardware', component.id)}
+                                style={{ alignSelf: 'flex-end' }}
+                              >
+                                <TrashCan />
+                              </IconButton>
+                            </div>
+                            
+                            <Select
+                              id={`hardware-allocation-${index}`}
+                              labelText="Allocation Method"
+                              value={component.allocationType || 'per_vm'}
+                              onChange={(e) => updateAdvancedComponent('hardware', component.id, 'allocationType', e.target.value)}
+                            >
+                              <SelectItem value="per_vm" text="Divide equally per VM" />
+                              <SelectItem value="per_cpu" text="Allocate per CPU" />
+                              <SelectItem value="per_memory" text="Allocate per GB Memory" />
+                              <SelectItem value="weighted" text="Weighted by resource usage" />
+                            </Select>
+                          </Stack>
+                        </div>
+                      ))}
+                      <Button
+                        kind="tertiary"
+                        size="sm"
+                        renderIcon={Add}
+                        onClick={() => addAdvancedComponent('hardware')}
+                      >
+                        Add Hardware Cost
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {/* Operational Costs (OpEx) */}
+                <div style={{ marginBottom: '2rem' }}>
+                  <h4 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    Operational Costs (OpEx)
+                    <Tag type="green" size="sm">Monthly Expense</Tag>
+                  </h4>
+                  <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1rem' }}>
+                    Operating expenses that are fully expensed each month.
+                  </p>
+                  
+                  {(!profile.advancedCostComponents.operations || profile.advancedCostComponents.operations.length === 0) ? (
+                    <div style={{ 
+                      padding: '2rem', 
+                      backgroundColor: '#f4f4f4', 
+                      textAlign: 'center',
+                      marginBottom: '1rem'
+                    }}>
+                      <p style={{ color: '#525252', marginBottom: '1rem' }}>No operational costs defined</p>
+                      <Button
+                        kind="tertiary"
+                        size="sm"
+                        renderIcon={Add}
+                        onClick={() => addAdvancedComponent('operations')}
+                      >
+                        Add Operational Cost
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      {profile.advancedCostComponents.operations.map((component, index) => (
+                        <div key={component.id} style={{ 
+                          padding: '1rem', 
+                          backgroundColor: '#f4f4f4', 
+                          marginBottom: '1rem',
+                          borderLeft: '4px solid #24a148'
+                        }}>
+                          <Stack gap={4}>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                              <TextInput
+                                id={`operations-name-${index}`}
+                                labelText="Component Name"
+                                placeholder="e.g., Power & Cooling, Support Contract"
+                                value={component.name}
+                                onChange={(e) => updateAdvancedComponent('operations', component.id, 'name', e.target.value)}
+                              />
+                              
+                              <Select
+                                id={`operations-type-${index}`}
+                                labelText="Cost Type"
+                                value={component.subType || 'facilities'}
+                                onChange={(e) => updateAdvancedComponent('operations', component.id, 'subType', e.target.value)}
+                              >
+                                <SelectItem value="facilities" text="Facilities (Power, Cooling, Space)" />
+                                <SelectItem value="support" text="Support & Maintenance" />
+                                <SelectItem value="staff" text="Staff Allocation" />
+                                <SelectItem value="software" text="Software Licenses" />
+                                <SelectItem value="other" text="Other OpEx" />
+                              </Select>
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                              <NumberInput
+                                id={`operations-cost-${index}`}
+                                label="Monthly Cost (AUD)"
+                                min={0}
+                                step={10}
+                                value={component.monthlyCost || 0}
+                                onChange={(e, { value }) => updateAdvancedComponent('operations', component.id, 'monthlyCost', value)}
+                              />
+                              
+                              <Select
+                                id={`operations-allocation-${index}`}
+                                labelText="Allocation Method"
+                                value={component.allocationType || 'per_vm'}
+                                onChange={(e) => updateAdvancedComponent('operations', component.id, 'allocationType', e.target.value)}
+                              >
+                                <SelectItem value="per_vm" text="Divide equally per VM" />
+                                <SelectItem value="per_cpu" text="Allocate per CPU" />
+                                <SelectItem value="per_memory" text="Allocate per GB Memory" />
+                                <SelectItem value="weighted" text="Weighted by resource usage" />
+                              </Select>
+                              
+                              <IconButton
+                                label="Remove component"
+                                kind="ghost"
+                                size="lg"
+                                onClick={() => removeAdvancedComponent('operations', component.id)}
+                              >
+                                <TrashCan />
+                              </IconButton>
+                            </div>
+                          </Stack>
+                        </div>
+                      ))}
+                      <Button
+                        kind="tertiary"
+                        size="sm"
+                        renderIcon={Add}
+                        onClick={() => addAdvancedComponent('operations')}
+                      >
+                        Add Operational Cost
+                      </Button>
+                    </>
+                  )}
+                </div>
+
+                {/* Cost Summary */}
+                <div style={{ 
+                  padding: '1.5rem', 
+                  backgroundColor: '#e0e5f7', 
+                  borderLeft: '4px solid #0f62fe',
+                  marginTop: '2rem'
+                }}>
+                  <h4 style={{ marginBottom: '1rem' }}>Monthly Cost Summary</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem' }}>
+                    <div>
+                      <p style={{ fontSize: '0.875rem', color: '#525252' }}>Total CapEx (Monthly)</p>
+                      <p style={{ fontSize: '1.5rem', fontWeight: '600', color: '#0f62fe' }}>
+                        ${calculateAdvancedCapEx()}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.875rem', color: '#525252' }}>Total OpEx (Monthly)</p>
+                      <p style={{ fontSize: '1.5rem', fontWeight: '600', color: '#24a148' }}>
+                        ${calculateAdvancedOpEx()}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={{ fontSize: '0.875rem', color: '#525252' }}>Total Monthly Cost</p>
+                      <p style={{ fontSize: '1.5rem', fontWeight: '600' }}>
+                        ${(parseFloat(calculateAdvancedCapEx()) + parseFloat(calculateAdvancedOpEx())).toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </>
             )}
           </Tile>

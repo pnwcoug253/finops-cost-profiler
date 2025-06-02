@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Grid,
   Column,
@@ -24,12 +24,21 @@ import {
 } from '@carbon/react';
 import { Download, Warning, Information } from '@carbon/react/icons';
 import { calculateVMCosts } from '../utils/costCalculator';
+import { sampleVMs } from '../data/sampleData';
 
-// Remove the destructuring - we'll use the render prop pattern instead
-
-function Allocations({ costProfiles, resources }) {
+function Allocations() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showOnlyUncosted, setShowOnlyUncosted] = useState(false);
+  const [costProfiles, setCostProfiles] = useState([]);
+  const resources = sampleVMs;
+
+  // Load cost profiles from localStorage
+  useEffect(() => {
+    const savedProfiles = localStorage.getItem('costProfiles');
+    if (savedProfiles) {
+      setCostProfiles(JSON.parse(savedProfiles));
+    }
+  }, []);
 
   // Calculate costs for all VMs
   const vmsWithCosts = useMemo(() => {
@@ -44,19 +53,21 @@ function Allocations({ costProfiles, resources }) {
     id: vm.ResourceId,
     name: vm.ResourceName,
     owner: vm.OwnerID,
-    cpu: vm.CPU,
-    memory: vm.MemoryGB,
-    storage: vm.StorageGB,
-    matchedProfile: vm.calculatedCosts.matchedProfiles.join(', ') || 'None',
-    monthlyCost: vm.calculatedCosts.totalMonthlyCost,
-    oneTimeCost: vm.calculatedCosts.totalOneTimeCost,
-    hasBreakdown: vm.calculatedCosts.breakdowns.length > 0
+    cpu: vm.vcpuCount,
+    memory: vm.memoryGb,
+    storage: vm.storageGb,
+    matchedProfile: vm.calculatedCosts.appliedProfiles?.join(', ') || 'None',
+    monthlyCost: vm.calculatedCosts.totalCost || 0,
+    monthlyCapEx: vm.calculatedCosts.monthlyCapEx || 0,
+    monthlyOpEx: vm.calculatedCosts.monthlyOpEx || 0,
+    oneTimeCost: vm.calculatedCosts.totalOneTimeCost || 0,
+    hasBreakdown: vm.calculatedCosts.costs?.length > 0
   }));
 
   const headers = [
     { key: 'name', header: 'Resource Name' },
     { key: 'owner', header: 'Owner' },
-    { key: 'cpu', header: 'CPU' },
+    { key: 'cpu', header: 'vCPUs' },
     { key: 'memory', header: 'Memory (GB)' },
     { key: 'storage', header: 'Storage (GB)' },
     { key: 'matchedProfile', header: 'Matched Profile' },
@@ -76,35 +87,33 @@ function Allocations({ costProfiles, resources }) {
 
   const exportAllocations = () => {
     // Create detailed CSV with cost breakdowns
-    const csvRows = [['VM Name', 'Owner', 'CPU', 'Memory', 'Storage', 'Matched Profile', 'Component', 'Type', 'Cost', 'Unit', 'Total Monthly', 'Total One-Time']];
+    const csvRows = [['VM Name', 'Owner', 'CPU', 'Memory', 'Storage', 'Matched Profile', 'Component', 'Type', 'Cost', 'Category', 'Total Monthly', 'Total One-Time']];
     
     vmsWithCosts.forEach(vm => {
-      if (vm.calculatedCosts.breakdowns.length > 0) {
-        vm.calculatedCosts.breakdowns.forEach(breakdown => {
-          breakdown.components.forEach((component, index) => {
-            csvRows.push([
-              vm.ResourceName,
-              vm.OwnerID,
-              vm.CPU,
-              vm.MemoryGB,
-              vm.StorageGB,
-              breakdown.profileName,
-              component.name,
-              component.type,
-              component.cost.toFixed(2),
-              component.unit,
-              index === 0 ? vm.calculatedCosts.totalMonthlyCost.toFixed(2) : '',
-              index === 0 ? vm.calculatedCosts.totalOneTimeCost.toFixed(2) : ''
-            ]);
-          });
+      if (vm.calculatedCosts.costs && vm.calculatedCosts.costs.length > 0) {
+        vm.calculatedCosts.costs.forEach((component, index) => {
+          csvRows.push([
+            vm.ResourceName,
+            vm.OwnerID,
+            vm.vcpuCount,
+            vm.memoryGb,
+            vm.storageGb,
+            vm.calculatedCosts.appliedProfiles?.join('; ') || 'None',
+            component.name,
+            component.type,
+            (component.value || 0).toFixed(2),
+            component.category || '',
+            index === 0 ? (vm.calculatedCosts.totalCost || 0).toFixed(2) : '',
+            index === 0 ? (vm.calculatedCosts.totalOneTimeCost || 0).toFixed(2) : ''
+          ]);
         });
       } else {
         csvRows.push([
           vm.ResourceName,
           vm.OwnerID,
-          vm.CPU,
-          vm.MemoryGB,
-          vm.StorageGB,
+          vm.vcpuCount,
+          vm.memoryGb,
+          vm.storageGb,
           'None',
           'No cost profile matched',
           '',
@@ -139,7 +148,7 @@ function Allocations({ costProfiles, resources }) {
 
   const renderExpandedContent = (rowId) => {
     const vm = vmsWithCosts.find(v => v.ResourceId === rowId);
-    if (!vm || vm.calculatedCosts.breakdowns.length === 0) {
+    if (!vm || !vm.calculatedCosts.costs || vm.calculatedCosts.costs.length === 0) {
       return (
         <div style={{ padding: '1rem' }}>
           <p style={{ color: '#6f6f6f' }}>No cost breakdown available</p>
@@ -150,53 +159,62 @@ function Allocations({ costProfiles, resources }) {
     return (
       <div style={{ padding: '1rem' }}>
         <h5 style={{ marginBottom: '1rem' }}>Cost Breakdown</h5>
-        {vm.calculatedCosts.breakdowns.map((breakdown, bIndex) => (
-          <div key={bIndex} style={{ marginBottom: '1rem' }}>
-            <p style={{ fontWeight: '500', marginBottom: '0.5rem' }}>
-              Profile: {breakdown.profileName}
-            </p>
-            <table style={{ width: '100%', fontSize: '0.875rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
-                  <th style={{ textAlign: 'left', padding: '0.5rem' }}>Component</th>
-                  <th style={{ textAlign: 'left', padding: '0.5rem' }}>Type</th>
-                  <th style={{ textAlign: 'left', padding: '0.5rem' }}>Calculation</th>
-                  <th style={{ textAlign: 'right', padding: '0.5rem' }}>Cost</th>
+        <div style={{ marginBottom: '1rem' }}>
+          <p style={{ fontWeight: '500', marginBottom: '0.5rem' }}>
+            Profile: {vm.calculatedCosts.appliedProfiles?.join(', ') || 'None'}
+          </p>
+          <table style={{ width: '100%', fontSize: '0.875rem' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid #e0e0e0' }}>
+                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Component</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Type</th>
+                <th style={{ textAlign: 'left', padding: '0.5rem' }}>Category</th>
+                <th style={{ textAlign: 'right', padding: '0.5rem' }}>Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vm.calculatedCosts.costs.map((component, cIndex) => (
+                <tr key={cIndex} style={{ borderBottom: '1px solid #f4f4f4' }}>
+                  <td style={{ padding: '0.5rem' }}>{component.name}</td>
+                  <td style={{ padding: '0.5rem' }}>
+                    <Tag type="gray" size="sm">{component.type}</Tag>
+                  </td>
+                  <td style={{ padding: '0.5rem' }}>
+                    <Tag type={
+                      component.category === 'hardware' ? 'blue' :
+                      component.category === 'operations' ? 'green' :
+                      component.category === 'software' ? 'purple' :
+                      'gray'
+                    } size="sm">
+                      {component.category || 'other'}
+                    </Tag>
+                  </td>
+                  <td style={{ textAlign: 'right', padding: '0.5rem', fontWeight: '500' }}>
+                    ${(component.value || 0).toFixed(2)}
+                    {component.frequency === 'one_time' && ' (one-time)'}
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {breakdown.components.map((component, cIndex) => (
-                  <tr key={cIndex} style={{ borderBottom: '1px solid #f4f4f4' }}>
-                    <td style={{ padding: '0.5rem' }}>{component.name}</td>
-                    <td style={{ padding: '0.5rem' }}>
-                      <Tag type="gray" size="sm">{component.type}</Tag>
-                    </td>
-                    <td style={{ padding: '0.5rem' }}>
-                      {component.calculation || component.unit}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: '0.5rem', fontWeight: '500' }}>
-                      ${component.cost.toFixed(2)}
-                      {component.isOneTime && ' (one-time)'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
+              ))}
+            </tbody>
+          </table>
+        </div>
         <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '2px solid #e0e0e0' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ fontWeight: '600' }}>Total Monthly Cost:</span>
             <span style={{ fontWeight: '600', fontSize: '1.125rem' }}>
-              ${vm.calculatedCosts.totalMonthlyCost.toFixed(2)}
+              ${(vm.calculatedCosts.totalCost || 0).toFixed(2)}
             </span>
           </div>
-          {vm.calculatedCosts.totalOneTimeCost > 0 && (
+          {vm.calculatedCosts.monthlyCapEx > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem' }}>
-              <span style={{ fontWeight: '600' }}>Total One-Time Cost:</span>
-              <span style={{ fontWeight: '600', fontSize: '1.125rem', color: '#0f62fe' }}>
-                ${vm.calculatedCosts.totalOneTimeCost.toFixed(2)}
-              </span>
+              <span>CapEx (Monthly):</span>
+              <span style={{ color: '#0f62fe' }}>${(vm.calculatedCosts.monthlyCapEx || 0).toFixed(2)}</span>
+            </div>
+          )}
+          {vm.calculatedCosts.monthlyOpEx > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.5rem' }}>
+              <span>OpEx (Monthly):</span>
+              <span style={{ color: '#198038' }}>${(vm.calculatedCosts.monthlyOpEx || 0).toFixed(2)}</span>
             </div>
           )}
         </div>
@@ -204,9 +222,11 @@ function Allocations({ costProfiles, resources }) {
     );
   };
 
-  const totalMonthlyCost = vmsWithCosts.reduce((sum, vm) => sum + vm.calculatedCosts.totalMonthlyCost, 0);
-  const totalOneTimeCost = vmsWithCosts.reduce((sum, vm) => sum + vm.calculatedCosts.totalOneTimeCost, 0);
-  const uncostedVMs = vmsWithCosts.filter(vm => vm.calculatedCosts.totalMonthlyCost === 0 && vm.calculatedCosts.totalOneTimeCost === 0);
+  const totalMonthlyCost = vmsWithCosts.reduce((sum, vm) => sum + (vm.calculatedCosts.totalCost || 0), 0);
+  const totalMonthlyCapEx = vmsWithCosts.reduce((sum, vm) => sum + (vm.calculatedCosts.monthlyCapEx || 0), 0);
+  const totalMonthlyOpEx = vmsWithCosts.reduce((sum, vm) => sum + (vm.calculatedCosts.monthlyOpEx || 0), 0);
+  const totalOneTimeCost = vmsWithCosts.reduce((sum, vm) => sum + (vm.calculatedCosts.totalOneTimeCost || 0), 0);
+  const uncostedVMs = vmsWithCosts.filter(vm => (vm.calculatedCosts.totalCost || 0) === 0 && (vm.calculatedCosts.totalOneTimeCost || 0) === 0);
 
   return (
     <Grid style={{ padding: '2rem' }}>
@@ -221,23 +241,33 @@ function Allocations({ costProfiles, resources }) {
 
       {/* Summary Cards */}
       <Column lg={16} md={8} sm={4} style={{ marginBottom: '2rem' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
           <Tile style={{ padding: '1.5rem' }}>
             <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.5rem' }}>
-              Total Monthly Infrastructure Cost
+              Total Monthly Cost
             </p>
             <p style={{ fontSize: '2rem', fontWeight: '600' }}>${totalMonthlyCost.toFixed(2)}</p>
             <p style={{ fontSize: '0.875rem', color: '#525252' }}>AUD per month</p>
           </Tile>
-          
+
           <Tile style={{ padding: '1.5rem' }}>
             <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.5rem' }}>
-              Total One-Time Costs
+              Monthly CapEx
             </p>
             <p style={{ fontSize: '2rem', fontWeight: '600', color: '#0f62fe' }}>
-              ${totalOneTimeCost.toFixed(2)}
+              ${totalMonthlyCapEx.toFixed(2)}
             </p>
-            <p style={{ fontSize: '0.875rem', color: '#525252' }}>AUD (setup/migration)</p>
+            <p style={{ fontSize: '0.875rem', color: '#525252' }}>Depreciated hardware</p>
+          </Tile>
+
+          <Tile style={{ padding: '1.5rem' }}>
+            <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.5rem' }}>
+              Monthly OpEx
+            </p>
+            <p style={{ fontSize: '2rem', fontWeight: '600', color: '#198038' }}>
+              ${totalMonthlyOpEx.toFixed(2)}
+            </p>
+            <p style={{ fontSize: '0.875rem', color: '#525252' }}>Operational costs</p>
           </Tile>
           
           <Tile style={{ padding: '1.5rem' }}>
@@ -269,6 +299,7 @@ function Allocations({ costProfiles, resources }) {
         <DataTable
           rows={filteredRows}
           headers={headers}
+          isSortable
         >
           {({
             rows,
@@ -311,7 +342,7 @@ function Allocations({ costProfiles, resources }) {
                   <TableRow>
                     <TableExpandHeader />
                     {headers.map((header) => (
-                      <TableHeader {...getHeaderProps({ header })}>
+                      <TableHeader {...getHeaderProps({ header })} key={header.key}>
                         {header.header}
                       </TableHeader>
                     ))}
@@ -364,6 +395,11 @@ function Allocations({ costProfiles, resources }) {
             <p style={{ marginBottom: '0.5rem' }}>
               <strong>Cost types:</strong> Monthly costs recur each billing period, while one-time 
               costs are applied only once (e.g., setup fees, migration costs).
+            </p>
+            <p style={{ marginBottom: '0.5rem' }}>
+              <strong>CapEx vs OpEx:</strong> Capital expenditures (CapEx) represent depreciated hardware 
+              costs, while operational expenditures (OpEx) are ongoing monthly costs like power, 
+              cooling, and support.
             </p>
             <p>
               <strong>No match:</strong> VMs showing "No match" need a cost profile with rules that 

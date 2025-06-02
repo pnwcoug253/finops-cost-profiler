@@ -19,7 +19,7 @@ import { Dashboard as DashboardIcon, ChartLine, VirtualMachine, Information } fr
 import { SimpleBarChart } from '@carbon/charts-react';
 import '@carbon/charts/styles.css';
 import { useNavigate } from 'react-router-dom';
-import { calculateTotalCosts } from '../utils/costCalculator';
+import { calculateTotalCosts, calculateVMCosts } from '../utils/costCalculator';
 import { sampleVMs } from '../data/sampleData';
 
 function Dashboard() {
@@ -88,20 +88,36 @@ function Dashboard() {
   // Get top expensive VMs
   const vmsWithCosts = resources.map(vm => {
     try {
-      const costs = require('../utils/costCalculator').calculateVMCosts(vm, costProfiles, resources);
+      const costs = calculateVMCosts(vm, costProfiles, resources);
+      
+      // Debug logging
+      if (costs.totalCost > 0) {
+        console.log(`VM ${vm.ResourceName} has cost:`, costs.totalCost);
+      }
+      
       return {
         ...vm,
         totalCost: costs.totalCost || 0
       };
     } catch (error) {
+      console.error('Error calculating VM cost:', error);
       return {
         ...vm,
         totalCost: 0
       };
     }
-  }).sort((a, b) => b.totalCost - a.totalCost).slice(0, 5);
+  });
 
-  const topVMsRows = vmsWithCosts.map((vm, index) => ({
+  // Filter to only show VMs with costs > 0, then sort and take top 5
+  const topVMs = vmsWithCosts
+    .filter(vm => vm.totalCost > 0)
+    .sort((a, b) => b.totalCost - a.totalCost)
+    .slice(0, 5);
+
+  // If we have less than 5 VMs with costs, add some without costs to fill the table
+  const topVMsToShow = topVMs.length > 0 ? topVMs : vmsWithCosts.slice(0, 5);
+
+  const topVMsRows = topVMsToShow.map((vm, index) => ({
     id: `${index}`,
     name: vm.ResourceName || 'Unknown',
     cost: `$${vm.totalCost.toFixed(2)}`,
@@ -249,7 +265,7 @@ function Dashboard() {
                 View All
               </Button>
             </div>
-            {topVMsRows.length > 0 ? (
+            {topVMsRows.length > 0 && topVMsToShow.some(vm => vm.totalCost > 0) ? (
               <DataTable rows={topVMsRows} headers={topVMsHeaders} size="sm">
                 {({ rows, headers, getTableProps, getHeaderProps, getRowProps }) => (
                   <TableContainer>

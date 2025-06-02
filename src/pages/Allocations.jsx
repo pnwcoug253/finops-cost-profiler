@@ -35,7 +35,7 @@ function Allocations({ costProfiles, resources }) {
   const vmsWithCosts = useMemo(() => {
     return resources.map(vm => ({
       ...vm,
-      calculatedCosts: calculateVMCosts(vm, costProfiles)
+      calculatedCosts: calculateVMCosts(vm, costProfiles, resources)
     }));
   }, [resources, costProfiles]);
 

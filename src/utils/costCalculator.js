@@ -42,6 +42,20 @@ export function evaluateCondition(vm, condition) {
   }
 }
 
+export function evaluateRules(rules, vm) {
+  if (!rules || !rules.conditions || rules.conditions.length === 0) {
+    return false;
+  }
+
+  const results = rules.conditions.map(condition => evaluateCondition(vm, condition));
+
+  if (rules.operator === 'AND') {
+    return results.every(result => result);
+  } else {
+    return results.some(result => result);
+  }
+}
+
 export function evaluateRuleGroup(vm, ruleGroup) {
   const { operator, conditions, groups } = ruleGroup;
   
@@ -62,112 +76,197 @@ export function evaluateRuleGroup(vm, ruleGroup) {
   }
 }
 
-export function calculateVMCosts(vm, costProfiles) {
-  const result = {
-    totalMonthlyCost: 0,
-    totalOneTimeCost: 0,
-    matchedProfiles: [],
-    breakdowns: []
-  };
+export function calculateVMCosts(vm, profiles = [], allVMs = []) {
+  const costs = [];
+  let totalCost = 0;
+  let monthlyCapEx = 0;
+  let monthlyOpEx = 0;
+  const appliedProfiles = [];
 
-  // Only process published profiles
-  const publishedProfiles = costProfiles.filter(profile => profile.status === 'published');
+  // Get published profiles ordered by priority
+  const publishedProfiles = profiles
+    .filter(p => p.status === 'published')
+    .sort((a, b) => a.priority - b.priority);
 
-  // Sort profiles by priority (lower number = higher priority)
-  const sortedProfiles = [...publishedProfiles].sort((a, b) => (a.priority || 999) - (b.priority || 999));
+  for (const profile of publishedProfiles) {
+    if (evaluateRules(profile.rules, vm)) {
+      appliedProfiles.push(profile.name);
+      
+      // Check if this is an advanced profile
+      if (profile.costModel === 'advanced') {
+        // Calculate advanced costs
+        const advancedBreakdown = calculateAdvancedCosts(vm, profile, allVMs);
+        totalCost += advancedBreakdown.totalCapEx + advancedBreakdown.totalOpEx;
+        monthlyCapEx += advancedBreakdown.totalCapEx;
+        monthlyOpEx += advancedBreakdown.totalOpEx;
+        costs.push(...advancedBreakdown.components);
+      } else {
+        // Original simple mode calculation
+        profile.costComponents.forEach(component => {
+          let componentCost = 0;
+          const isRecurring = component.frequency !== 'one_time';
 
-  // Track which profiles have been applied
-  const appliedProfiles = new Set();
-
-  for (const profile of sortedProfiles) {
-    // Check if this profile matches the VM
-    if (evaluateRuleGroup(vm, profile.rules)) {
-      // First match wins - skip if we already have a match
-      if (appliedProfiles.size > 0) {
-        continue;
-      }
-
-      appliedProfiles.add(profile.id);
-      result.matchedProfiles.push(profile.name);
-
-      // Calculate costs for each component
-      const breakdown = {
-        profileName: profile.name,
-        components: []
-      };
-
-      profile.costComponents.forEach(component => {
-        let cost = 0;
-        
-        if (component.type === 'one_time') {
-          // One-time costs are not added to monthly
-          result.totalOneTimeCost += component.value;
-          breakdown.components.push({
-            name: component.name,
-            type: component.type,
-            cost: component.value,
-            unit: component.unit,
-            isOneTime: true
-          });
-        } else {
           switch (component.type) {
-            case 'cpu':
-              cost = vm.CPU * component.value;
+            case 'per_cpu':
+              componentCost = component.value * (vm.vcpuCount || 0);
               break;
-            case 'memory':
-              cost = vm.MemoryGB * component.value;
+            case 'per_gb_memory':
+              componentCost = component.value * (vm.memoryGb || 0);
               break;
-            case 'storage':
-              cost = vm.StorageGB * component.value;
+            case 'per_gb_storage':
+              componentCost = component.value * (vm.storageGb || 0);
               break;
-            case 'fixed':
-              cost = component.value;
+            case 'fixed_monthly':
+              componentCost = component.value;
               break;
+            case 'one_time':
+              // For one-time costs, amortize over 12 months
+              componentCost = component.value / 12;
+              break;
+            default:
+              componentCost = component.value;
           }
 
-          result.totalMonthlyCost += cost;
-          breakdown.components.push({
-            name: component.name,
-            type: component.type,
-            cost: cost,
-            unit: component.unit,
-            calculation: `${getCalculationDescription(component, vm)} = ${cost.toFixed(2)}`
-          });
-        }
-      });
-
-      result.breakdowns.push(breakdown);
+          if (isRecurring || component.type === 'one_time') {
+            totalCost += componentCost;
+            monthlyOpEx += componentCost; // Simple mode costs are considered OpEx
+            costs.push({
+              name: component.name,
+              type: component.type,
+              value: componentCost,
+              frequency: component.frequency || 'monthly',
+              category: component.category || 'other'
+            });
+          }
+        });
+      }
+      
+      // First match wins - don't process more profiles
+      break;
     }
   }
 
-  return result;
+  return {
+    totalCost,
+    costs,
+    appliedProfiles,
+    monthlyCapEx,
+    monthlyOpEx,
+    totalMonthlyCost: totalCost,
+    totalOneTimeCost: 0 // For compatibility
+  };
 }
 
-function getCalculationDescription(component, vm) {
-  switch (component.type) {
-    case 'cpu':
-      return `${vm.CPU} CPUs × $${component.value}`;
-    case 'memory':
-      return `${vm.MemoryGB} GB × $${component.value}`;
-    case 'storage':
-      return `${vm.StorageGB} GB × $${component.value}`;
-    case 'fixed':
-      return `Fixed cost`;
-    default:
-      return '';
+// Calculate costs for advanced mode with allocation methods
+function calculateAdvancedCosts(vm, profile, allVMs = []) {
+  const breakdown = {
+    profileName: profile.name,
+    totalCapEx: 0,
+    totalOpEx: 0,
+    components: []
+  };
+
+  // Get all matching VMs for allocation calculations
+  const matchingVMs = allVMs.length > 0 
+    ? allVMs.filter(v => evaluateRules(profile.rules, v))
+    : [vm]; // Fallback to just current VM if no VM list provided
+
+  // Calculate totals for allocation
+  const totals = {
+    vmCount: matchingVMs.length || 1,
+    totalCPU: matchingVMs.reduce((sum, v) => sum + (v.vcpuCount || 0), 0) || 1,
+    totalMemory: matchingVMs.reduce((sum, v) => sum + (v.memoryGb || 0), 0) || 1,
+    totalStorage: matchingVMs.reduce((sum, v) => sum + (v.storageGb || 0), 0) || 1
+  };
+
+  // Calculate weighted total
+  totals.totalWeighted = matchingVMs.reduce((sum, v) => {
+    // Weighted score: CPU=40%, Memory=40%, Storage=20%
+    const cpuScore = (v.vcpuCount || 0) * 0.4;
+    const memoryScore = (v.memoryGb || 0) * 0.4;
+    const storageScore = ((v.storageGb || 0) / 100) * 0.2;
+    return sum + cpuScore + memoryScore + storageScore;
+  }, 0) || 1;
+
+  // Calculate VM's share for different allocation methods
+  const vmShares = {
+    per_vm: 1 / totals.vmCount,
+    per_cpu: (vm.vcpuCount || 0) / totals.totalCPU,
+    per_memory: (vm.memoryGb || 0) / totals.totalMemory,
+    per_storage: (vm.storageGb || 0) / totals.totalStorage,
+    weighted: ((vm.vcpuCount || 0) * 0.4 + (vm.memoryGb || 0) * 0.4 + ((vm.storageGb || 0) / 100) * 0.2) / totals.totalWeighted
+  };
+
+  // Process hardware costs (CapEx)
+  if (profile.advancedCostComponents?.hardware) {
+    profile.advancedCostComponents.hardware.forEach(component => {
+      const monthlyDepreciation = (component.purchasePrice || 0) / ((component.depreciationYears || 5) * 12);
+      const allocation = component.allocation || 'per_vm';
+      const vmShare = vmShares[allocation] || vmShares.per_vm;
+      const vmCost = monthlyDepreciation * vmShare;
+      
+      breakdown.totalCapEx += vmCost;
+      breakdown.components.push({
+        name: component.name,
+        type: 'CapEx (Hardware)',
+        subType: component.hardwareType,
+        category: 'hardware',
+        value: vmCost,
+        totalCost: monthlyDepreciation,
+        vmShare: vmShare,
+        calculation: `$${component.purchasePrice} over ${component.depreciationYears} years × ${(vmShare * 100).toFixed(1)}% share`,
+        details: {
+          purchasePrice: component.purchasePrice,
+          depreciationYears: component.depreciationYears,
+          allocation: allocation,
+          matchingVMs: totals.vmCount
+        }
+      });
+    });
   }
+
+  // Process operational costs (OpEx)
+  if (profile.advancedCostComponents?.operations) {
+    profile.advancedCostComponents.operations.forEach(component => {
+      const allocation = component.allocation || 'per_vm';
+      const vmShare = vmShares[allocation] || vmShares.per_vm;
+      const vmCost = (component.monthlyCost || 0) * vmShare;
+      
+      breakdown.totalOpEx += vmCost;
+      breakdown.components.push({
+        name: component.name,
+        type: `OpEx (${component.category})`,
+        subType: component.category,
+        category: component.category,
+        value: vmCost,
+        totalCost: component.monthlyCost,
+        vmShare: vmShare,
+        calculation: `$${component.monthlyCost}/month × ${(vmShare * 100).toFixed(1)}% share`,
+        details: {
+          allocation: allocation,
+          matchingVMs: totals.vmCount
+        }
+      });
+    });
+  }
+
+  return breakdown;
 }
 
 export function calculateTotalCosts(resources, costProfiles) {
   let totalMonthly = 0;
   let totalOneTime = 0;
+  let totalCapEx = 0;
+  let totalOpEx = 0;
   let costedVMs = 0;
 
   resources.forEach(vm => {
-    const costs = calculateVMCosts(vm, costProfiles);
-    totalMonthly += costs.totalMonthlyCost;
+    const costs = calculateVMCosts(vm, costProfiles, resources);
+    totalMonthly += costs.totalCost;
     totalOneTime += costs.totalOneTimeCost;
-    if (costs.totalMonthlyCost > 0 || costs.totalOneTimeCost > 0) {
+    totalCapEx += costs.monthlyCapEx || 0;
+    totalOpEx += costs.monthlyOpEx || 0;
+    if (costs.totalCost > 0) {
       costedVMs++;
     }
   });
@@ -175,6 +274,8 @@ export function calculateTotalCosts(resources, costProfiles) {
   return {
     totalMonthly,
     totalOneTime,
+    totalCapEx,
+    totalOpEx,
     costedVMs,
     uncostedVMs: resources.length - costedVMs
   };

@@ -36,21 +36,39 @@ function CostProfiles({ costProfiles, setCostProfiles }) {
   const draftProfiles = costProfiles.filter(p => p.status === 'draft').length;
 
   // Prepare data for the table
-  const rows = costProfiles.map(profile => ({
-    id: profile.id,
-    name: profile.name,
-    description: profile.description,
-    status: profile.status,
-    priority: profile.priority || 999,
-    componentCount: profile.costComponents.length,
-    createdDate: new Date(profile.createdDate).toLocaleDateString(),
-    modifiedDate: new Date(profile.modifiedDate).toLocaleDateString()
-  }));
+  const rows = costProfiles.map(profile => {
+    // Calculate component count based on cost model type
+    let componentCount = 0;
+    if (profile.costModel === 'advanced' && profile.advancedCostComponents) {
+      // Count all advanced components
+      componentCount = 
+        (profile.advancedCostComponents.hardware?.length || 0) +
+        (profile.advancedCostComponents.operations?.length || 0) +
+        (profile.advancedCostComponents.facilities?.length || 0) +
+        (profile.advancedCostComponents.software?.length || 0);
+    } else {
+      // Simple mode
+      componentCount = profile.costComponents?.length || 0;
+    }
+
+    return {
+      id: profile.id,
+      name: profile.name,
+      description: profile.description,
+      status: profile.status,
+      priority: profile.priority || 999,
+      componentCount: componentCount,
+      costModel: profile.costModel || 'simple',
+      createdDate: new Date(profile.createdDate).toLocaleDateString(),
+      modifiedDate: new Date(profile.modifiedDate).toLocaleDateString()
+    };
+  });
 
   const headers = [
     { key: 'name', header: 'Profile Name' },
     { key: 'description', header: 'Description' },
     { key: 'status', header: 'Status' },
+    { key: 'costModel', header: 'Model' },
     { key: 'priority', header: 'Priority' },
     { key: 'componentCount', header: 'Cost Components' },
     { key: 'modifiedDate', header: 'Last Modified' },
@@ -170,9 +188,14 @@ function CostProfiles({ costProfiles, setCostProfiles }) {
                         <TableCell>{row.cells[0].value}</TableCell>
                         <TableCell>{row.cells[1].value}</TableCell>
                         <TableCell>{getStatusTag(row.cells[2].value)}</TableCell>
-                        <TableCell>{row.cells[3].value}</TableCell>
+                        <TableCell>
+                          <Tag type={row.cells[3].value === 'advanced' ? 'purple' : 'gray'} size="sm">
+                            {row.cells[3].value === 'advanced' ? 'Advanced' : 'Simple'}
+                          </Tag>
+                        </TableCell>
                         <TableCell>{row.cells[4].value}</TableCell>
                         <TableCell>{row.cells[5].value}</TableCell>
+                        <TableCell>{row.cells[6].value}</TableCell>
                         <TableCell>
                           <OverflowMenu flipped>
                             <OverflowMenuItem

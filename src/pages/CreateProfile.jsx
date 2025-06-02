@@ -274,20 +274,55 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
     return total.toFixed(2);
   };
   const validateForm = () => {
-    const newErrors = {};
+  const newErrors = {};
+  
+  if (!profile.name.trim()) {
+    newErrors.name = 'Profile name is required';
+  }
+  
+  if (!profile.description.trim()) {
+    newErrors.description = 'Description is required';
+  }
+  
+  if (profile.rules.conditions.length === 0) {
+    newErrors.rules = 'At least one rule condition is required';
+  }
+  
+  // Validate based on cost model type
+  if (profile.costModel === 'advanced') {
+    // Check if at least one advanced component exists
+    const hasHardware = profile.advancedCostComponents.hardware && profile.advancedCostComponents.hardware.length > 0;
+    const hasOperations = profile.advancedCostComponents.operations && profile.advancedCostComponents.operations.length > 0;
     
-    if (!profile.name.trim()) {
-      newErrors.name = 'Profile name is required';
+    if (!hasHardware && !hasOperations) {
+      newErrors.components = 'At least one cost component (hardware or operational) is required';
     }
     
-    if (!profile.description.trim()) {
-      newErrors.description = 'Description is required';
+    // Validate hardware components
+    if (profile.advancedCostComponents.hardware) {
+      profile.advancedCostComponents.hardware.forEach((comp, index) => {
+        if (!comp.name.trim()) {
+          newErrors[`hardware_name_${index}`] = 'Component name is required';
+        }
+        if (!comp.purchasePrice || comp.purchasePrice <= 0) {
+          newErrors[`hardware_price_${index}`] = 'Purchase price must be greater than 0';
+        }
+      });
     }
     
-    if (profile.rules.conditions.length === 0) {
-      newErrors.rules = 'At least one rule condition is required';
+    // Validate operations components
+    if (profile.advancedCostComponents.operations) {
+      profile.advancedCostComponents.operations.forEach((comp, index) => {
+        if (!comp.name.trim()) {
+          newErrors[`operations_name_${index}`] = 'Component name is required';
+        }
+        if (!comp.monthlyCost || comp.monthlyCost <= 0) {
+          newErrors[`operations_cost_${index}`] = 'Monthly cost must be greater than 0';
+        }
+      });
     }
-    
+  } else {
+    // Simple mode validation
     if (profile.costComponents.length === 0) {
       newErrors.components = 'At least one cost component is required';
     }
@@ -300,11 +335,14 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
         newErrors[`component_value_${index}`] = 'Value must be greater than 0';
       }
     });
+  }
+  
+  console.log('Validation errors:', newErrors);
+  setErrors(newErrors);
+  return Object.keys(newErrors).length === 0;
+};
     
-    console.log('Validation errors:', newErrors);
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+
 
   // Save profile
   const handleSave = () => {
@@ -684,6 +722,8 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
                                 placeholder="e.g., Server Hardware, Storage Array"
                                 value={component.name}
                                 onChange={(e) => updateAdvancedComponent('hardware', component.id, 'name', e.target.value)}
+                                invalid={!!errors[`hardware_name_${index}`]}
+                                invalidText={errors[`hardware_name_${index}`]}
                               />
                               
                               <Select
@@ -707,6 +747,8 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
                                 step={100}
                                 value={component.purchasePrice || 0}
                                 onChange={(e, { value }) => updateAdvancedComponent('hardware', component.id, 'purchasePrice', value)}
+                                invalid={!!errors[`hardware_price_${index}`]}
+                                invalidText={errors[`hardware_price_${index}`]}
                               />
                               
                               <NumberInput

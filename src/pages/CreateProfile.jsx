@@ -40,12 +40,19 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
     description: '',
     status: 'draft',
     priority: 1,
+    costModel: 'simple', // New field for cost model type
     rules: {
       operator: 'AND',
       conditions: [],
       groups: []
     },
-    costComponents: []
+    costComponents: [],
+    advancedCostComponents: { // New structure for advanced mode
+      hardware: [],
+      operations: [],
+      facilities: [],
+      software: []
+    }
   });
 
   const [errors, setErrors] = useState({});
@@ -86,12 +93,19 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
   ];
 
   const componentTypeOptions = [
-    { value: 'cpu', label: 'Cost per CPU' },
-    { value: 'memory', label: 'Cost per GB Memory' },
-    { value: 'storage', label: 'Cost per GB Storage' },
-    { value: 'fixed', label: 'Fixed Monthly Cost' },
-    { value: 'one_time', label: 'One-Time Cost' }
+    { value: 'cpu', label: 'Cost per CPU', category: 'hardware' },
+    { value: 'memory', label: 'Cost per GB Memory', category: 'hardware' },
+    { value: 'storage', label: 'Cost per GB Storage', category: 'hardware' },
+    { value: 'fixed', label: 'Fixed Monthly Cost', category: 'operations' },
+    { value: 'one_time', label: 'One-Time Cost', category: 'other' }
   ];
+
+  const componentCategories = {
+    hardware: 'Hardware',
+    operations: 'Operations',
+    software: 'Software',
+    other: 'Other'
+  };
 
   // Add a new condition
   const addCondition = () => {
@@ -142,7 +156,8 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
           type: 'cpu', 
           name: '', 
           value: 0, 
-          unit: 'per CPU/month' 
+          unit: 'per CPU/month',
+          category: 'hardware' // Add category
         }
       ]
     });
@@ -327,6 +342,31 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
             </Stack>
           </Tile>
 
+          {/* Cost Model Selection */}
+          <Tile style={{ marginBottom: '2rem', padding: '2rem' }}>
+            <h3 style={{ marginBottom: '1.5rem' }}>Cost Model</h3>
+            <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1.5rem' }}>
+              Choose how you want to define infrastructure costs. Simple mode is great for quick estimates, 
+              while Advanced mode provides detailed CapEx/OpEx tracking with depreciation.
+            </p>
+            
+            <RadioButtonGroup
+              legendText="Select Cost Model Type"
+              name="cost-model"
+              value={profile.costModel}
+              onChange={(value) => setProfile({ ...profile, costModel: value })}
+            >
+              <RadioButton 
+                labelText="Simple - Basic cost allocation with categories" 
+                value="simple" 
+              />
+              <RadioButton 
+                labelText="Advanced - Detailed CapEx/OpEx with depreciation" 
+                value="advanced" 
+              />
+            </RadioButtonGroup>
+          </Tile>
+
           {/* Rule Configuration */}
           <Tile style={{ marginBottom: '2rem', padding: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -363,7 +403,7 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
             <div style={{ marginBottom: '1rem' }}>
               <p style={{ fontWeight: 500, marginBottom: '0.5rem' }}>Conditions</p>
               <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1rem' }}>
-                Define conditions to match VMs. For example: CPU greater than 8, Tags.environment = "production"
+                Define conditions to match VMs. For example: CPU > 8, Tags.environment = "production"
               </p>
             </div>
             
@@ -422,7 +462,9 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
 
           {/* Cost Components */}
           <Tile style={{ marginBottom: '2rem', padding: '2rem' }}>
-            <h3 style={{ marginBottom: '1.5rem' }}>Cost Components</h3>
+            <h3 style={{ marginBottom: '1.5rem' }}>
+              {profile.costModel === 'simple' ? 'Cost Components' : 'Advanced Cost Configuration'}
+            </h3>
             
             {errors.components && (
               <InlineNotification
@@ -433,80 +475,117 @@ function CreateProfile({ costProfiles, setCostProfiles, editMode }) {
               />
             )}
             
-            <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1.5rem' }}>
-              Define how costs are calculated when this profile matches a VM. You can add multiple 
-              components (e.g., CPU cost + memory cost + fixed overhead).
-            </p>
-            
-            {profile.costComponents.map((component, index) => (
-              <div key={component.id} style={{ 
-                padding: '1rem', 
-                backgroundColor: '#f4f4f4', 
-                marginBottom: '1rem',
-                borderLeft: '4px solid #0f62fe'
-              }}>
-                <Stack gap={4}>
-                  <div style={{ display: 'flex', gap: '1rem' }}>
-                    <TextInput
-                      id={`component-name-${index}`}
-                      labelText="Component Name"
-                      placeholder="e.g., CPU Cost, VMware License"
-                      value={component.name}
-                      onChange={(e) => updateCostComponent(component.id, 'name', e.target.value)}
-                      invalid={!!errors[`component_name_${index}`]}
-                      invalidText={errors[`component_name_${index}`]}
-                    />
-                    
-                    <Select
-                      id={`component-type-${index}`}
-                      labelText="Type"
-                      value={component.type}
-                      onChange={(e) => updateComponentType(component.id, e.target.value)}
-                    >
-                      {componentTypeOptions.map(opt => (
-                        <SelectItem key={opt.value} value={opt.value} text={opt.label} />
-                      ))}
-                    </Select>
-                  </div>
+            {profile.costModel === 'simple' ? (
+              <>
+                <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1.5rem' }}>
+                  Define how costs are calculated when this profile matches a VM. Components are organized 
+                  by category for better cost visibility.
+                </p>
+                
+                {/* Group components by category */}
+                {Object.entries(componentCategories).map(([categoryKey, categoryName]) => {
+                  const categoryComponents = profile.costComponents.filter(comp => {
+                    const componentType = componentTypeOptions.find(opt => opt.value === comp.type);
+                    return componentType?.category === categoryKey;
+                  });
                   
-                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-                    <NumberInput
-                      id={`component-value-${index}`}
-                      label="Cost Value (AUD)"
-                      min={0}
-                      step={0.01}
-                      value={component.value}
-                      onChange={(e, { value }) => updateCostComponent(component.id, 'value', value)}
-                      invalid={!!errors[`component_value_${index}`]}
-                      invalidText={errors[`component_value_${index}`]}
-                    />
-                    
-                    <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.25rem' }}>Unit</p>
-                      <p style={{ padding: '0.75rem', backgroundColor: '#e0e0e0' }}>{component.unit}</p>
+                  if (categoryComponents.length === 0 && categoryKey !== 'hardware') return null;
+                  
+                  return (
+                    <div key={categoryKey} style={{ marginBottom: '2rem' }}>
+                      <h4 style={{ marginBottom: '1rem', fontSize: '1rem' }}>{categoryName}</h4>
+                      
+                      {categoryComponents.map((component, index) => (
+                        <div key={component.id} style={{ 
+                          padding: '1rem', 
+                          backgroundColor: '#f4f4f4', 
+                          marginBottom: '1rem',
+                          borderLeft: '4px solid #0f62fe'
+                        }}>
+                          <Stack gap={4}>
+                            <div style={{ display: 'flex', gap: '1rem' }}>
+                              <TextInput
+                                id={`component-name-${index}`}
+                                labelText="Component Name"
+                                placeholder="e.g., CPU Cost, VMware License"
+                                value={component.name}
+                                onChange={(e) => updateCostComponent(component.id, 'name', e.target.value)}
+                                invalid={!!errors[`component_name_${index}`]}
+                                invalidText={errors[`component_name_${index}`]}
+                              />
+                              
+                              <Select
+                                id={`component-type-${index}`}
+                                labelText="Type"
+                                value={component.type}
+                                onChange={(e) => updateComponentType(component.id, e.target.value)}
+                              >
+                                {componentTypeOptions
+                                  .filter(opt => opt.category === categoryKey)
+                                  .map(opt => (
+                                    <SelectItem key={opt.value} value={opt.value} text={opt.label} />
+                                  ))}
+                              </Select>
+                            </div>
+                            
+                            <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+                              <NumberInput
+                                id={`component-value-${index}`}
+                                label="Cost Value (AUD)"
+                                min={0}
+                                step={0.01}
+                                value={component.value}
+                                onChange={(e, { value }) => updateCostComponent(component.id, 'value', value)}
+                                invalid={!!errors[`component_value_${index}`]}
+                                invalidText={errors[`component_value_${index}`]}
+                              />
+                              
+                              <div style={{ flex: 1 }}>
+                                <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '0.25rem' }}>Unit</p>
+                                <p style={{ padding: '0.75rem', backgroundColor: '#e0e0e0' }}>{component.unit}</p>
+                              </div>
+                              
+                              <IconButton
+                                label="Remove component"
+                                kind="ghost"
+                                size="lg"
+                                onClick={() => removeCostComponent(component.id)}
+                              >
+                                <TrashCan />
+                              </IconButton>
+                            </div>
+                          </Stack>
+                        </div>
+                      ))}
                     </div>
-                    
-                    <IconButton
-                      label="Remove component"
-                      kind="ghost"
-                      size="lg"
-                      onClick={() => removeCostComponent(component.id)}
-                    >
-                      <TrashCan />
-                    </IconButton>
-                  </div>
-                </Stack>
-              </div>
-            ))}
-            
-            <Button
-              kind="tertiary"
-              renderIcon={Add}
-              onClick={addCostComponent}
-              size="sm"
-            >
-              Add Cost Component
-            </Button>
+                  );
+                })}
+                
+                <Button
+                  kind="tertiary"
+                  renderIcon={Add}
+                  onClick={addCostComponent}
+                  size="sm"
+                >
+                  Add Cost Component
+                </Button>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: '0.875rem', color: '#525252', marginBottom: '1.5rem' }}>
+                  Configure detailed costs with proper CapEx/OpEx classification and depreciation schedules. 
+                  Hardware costs will be depreciated over time, while operational costs are expensed monthly.
+                </p>
+                
+                {/* Advanced mode UI - we'll implement this next */}
+                <InlineNotification
+                  kind="info"
+                  title="Advanced Mode"
+                  subtitle="Advanced cost configuration coming soon!"
+                  lowContrast
+                />
+              </>
+            )}
           </Tile>
 
           {/* Actions */}
